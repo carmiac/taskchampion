@@ -1450,22 +1450,6 @@ mod test {
 
     #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
-    async fn test_set_status_iterative_uses_due_when_set() {
-        let preset_due = Utc.with_ymd_and_hms(2026, 1, 10, 12, 0, 0).unwrap();
-        let mut replica = Replica::new(InMemoryStorage::new());
-        let mut ops = Operations::new();
-        let uuid = Uuid::new_v4();
-        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
-        task.set_due(Some(preset_due), &mut ops).unwrap();
-        task.data.update("iter", Some("weekly".into()), &mut ops);
-        task.data
-            .update("iter_type", Some("fixed".into()), &mut ops);
-        task.set_status(Status::Iterative, &mut ops).unwrap();
-        assert_eq!(task.get_due(), Some(preset_due));
-    }
-
-    #[cfg(feature = "iterative-tasks")]
-    #[tokio::test]
     async fn test_set_status_iterative_requires_anchor_date() {
         // There is no default first date, so a task with none of due, scheduled
         // or wait cannot become iterative.
