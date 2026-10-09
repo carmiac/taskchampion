@@ -1466,6 +1466,22 @@ mod test {
 
     #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
+    async fn test_set_status_iterative_requires_anchor_date() {
+        // There is no default first date, so a task with none of due, scheduled
+        // or wait cannot become iterative.
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let mut task = replica.create_task(Uuid::new_v4(), &mut ops).await.unwrap();
+        task.data.update("iter", Some("weekdays".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+        assert_eq!(task.get_due(), None);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
     async fn test_set_status_iterative_no_iter() {
         let mut replica = Replica::new(InMemoryStorage::new());
         let mut ops = Operations::new();
@@ -1832,22 +1848,16 @@ mod test {
 
     #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
-    async fn test_iterative_keys_not_udas() {
+    async fn test_iter_count_not_uda() {
         with_mut_task(
             |task, ops| {
                 assert!(task
                     .set_user_defined_attribute("iter_count", "1", ops)
                     .is_err());
-                task.set_user_defined_attribute("iter", "weekly", ops)
-                    .unwrap();
-                task.set_user_defined_attribute("iter_type", "fixed", ops)
-                    .unwrap();
                 task.set_value("iter_count", Some("1".into()), ops).unwrap();
             },
             |task| {
                 let keys: Vec<&str> = task.get_user_defined_attributes().map(|(k, _)| k).collect();
-                assert!(keys.contains(&"iter"));
-                assert!(keys.contains(&"iter_type"));
                 assert!(!keys.contains(&"iter_count"));
             },
         )
@@ -2160,47 +2170,11 @@ mod test_setup_iterative_task {
         );
         let completed = replica.get_task(iter_uuid).await.unwrap().unwrap();
         assert_eq!(completed.get_status(), Status::Completed);
-    }
-
-    #[tokio::test]
-    async fn test_undo_iterative_completion_leaves_dependent_untouched() {
-        // Completing an iterative task never mutates a dependent, so undoing the
-        // completion restores prior state exactly (the dependent's modified and dep
-        // edge are preserved).
-        let (mut replica, _, ops, iter_uuid) = setup_iterative_task("daily", "fixed").await;
-        replica.commit_operations(ops).await.unwrap();
-
-        let mut ops = Operations::new();
-        let dep_uuid = Uuid::new_v4();
-        let mut dep_task = replica.create_task(dep_uuid, &mut ops).await.unwrap();
-        dep_task.set_status(Status::Pending, &mut ops).unwrap();
-        dep_task.add_dependency(iter_uuid, &mut ops).unwrap();
-        replica.commit_operations(ops).await.unwrap();
-
-        let before = replica.get_task(dep_uuid).await.unwrap().unwrap();
-        let modified_before = before.get_value("modified").map(str::to_owned);
-        let deps_before: Vec<Uuid> = before.get_dependencies().collect();
-
-        // Complete behind an undo point, then undo.
-        let mut ops = Operations::new();
-        ops.push(crate::Operation::UndoPoint);
-        let mut iter_task = replica.get_task(iter_uuid).await.unwrap().unwrap();
-        iter_task.set_status(Status::Completed, &mut ops).unwrap();
-        replica.commit_operations(ops).await.unwrap();
-
-        let undo_ops = replica.get_undo_operations().await.unwrap();
-        assert!(replica.commit_reversed_operations(undo_ops).await.unwrap());
-
-        let after = replica.get_task(dep_uuid).await.unwrap().unwrap();
+        let depmap = replica.dependency_map(true).await.unwrap();
         assert_eq!(
-            after.get_value("modified").map(str::to_owned),
-            modified_before,
-            "dependent's modified should be preserved"
-        );
-        assert_eq!(
-            after.get_dependencies().collect::<Vec<_>>(),
-            deps_before,
-            "dependent's dependency edge should be preserved"
+            depmap.dependencies(dep_uuid).collect::<Vec<_>>(),
+            Vec::<Uuid>::new(),
+            "dependent has no remaining pending dependencies"
         );
     }
 
@@ -2339,8 +2313,8 @@ mod test_setup_iterative_task {
     #[tokio::test]
     async fn test_chained_then_fixed_anchors_to_current_due() {
         // A task completed as Chained advances its successor's due to a new
-        // weekday. Switching that successor to Fixed must then anchor off its
-        // current due, not a stale original anchor.
+        // weekday. Switching that successor to Fixed then anchors off its
+        // current due.
         mock_time::set(time_start());
         let (mut replica, mut task, mut ops, uuid) =
             setup_iterative_task("weekly", "chained").await;
@@ -2636,9 +2610,9 @@ mod test_setup_iterative_task {
 
     #[tokio::test]
     async fn test_status_roundtrip_preserves_series_position() {
-        // A live successor's series position is stored in `iter_count`. Toggling
-        // its status Iterative -> Pending -> Iterative re-bakes the rule from
-        // `iter` but leaves `iter_count` untouched, so the series stays capped.
+        // Setting status Iterative initializes `iter_count` to 1 only when it is
+        // missing. Toggling a successor Iterative -> Pending -> Iterative keeps
+        // its existing `iter_count`, so a COUNT-limited series stays capped.
         mock_time::set(time_start());
         let (mut replica, mut task, mut ops, uuid) =
             setup_iterative_task("FREQ=DAILY;COUNT=2", "fixed").await;

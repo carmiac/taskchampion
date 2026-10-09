@@ -37,7 +37,7 @@ Four optional date properties interact with iterative tasks.
 
 Front ends generally assume, but do not strictly enforce, that `due` >= `scheduled` >= `wait`, i.e. a task should be `due` after it is `scheduled`, and shouldn't be either of those while `wait`ing.
 
-When an iterative task is closed, the `due`, `scheduled`, `wait` and `until` are all advanced by the same amount of time if they exist. The advancement period is calculated for the highest priority date, and then the others are moved forward by the same time delta. This preserves the spacing between them.
+When an iterative task is closed, the `due`, `scheduled`, `wait` and `until` are all advanced by the same amount of time if they exist. The advancement period is calculated for the highest priority date (the "anchor"), and then the others are moved forward by the same time delta. This preserves the spacing between them.
 
 Additionally, each iterative task records its position in the series in an `iter_count` property. This is used to end iterative tasks that have a specific number of iterations requested. 
 
@@ -55,14 +55,14 @@ Note: RRules represent time to the nearest whole second, so all iterative task d
 
 ### RRule Generation
 
-For all advantages of RRules, they are a unique syntax that (almost) no one wants to write regularly. The `iter` value is therefore accepted in four flavors:
+For all the advantages of RRules, they are a unique syntax that (almost) no one wants to write regularly. The `iter` value is therefore accepted in four flavors:
 
 1. Raw RRules, for people who wish to use them directly.
 2. TaskWarrior-style duration shorthand, such as `daily`, `3wk`, `weekdays`, `fortnight`, `2year`, etc.
 3. ISO-8601 durations, such as `P2W`, `P3D` or `PT12H`, as long as they don't mix months or years with smaller units, such as `P1Y3D`, or a duration combining weeks with any other component, such as `P2W3D`, which ISO-8601 also doesn't allow.
 4. Free-form natural language: handled by the [`text2rrule`](https://crates.io/crates/text2rrule) crate. Phrases such as `every Monday`, `every other Tuesday`, or `every two weeks on friday` are parsed into an RRULE string and then into an `RRule` value. `text2rrule` supports multiple locales.
 
-The rrule generator tries to parse the `iter` value as raw RRULE first, then the TaskWarrior shorthand parser, then ISO-8601, then `text2rrule`
+The rrule generator tries to parse the `iter` value as raw RRULE first, then the TaskWarrior shorthand parser, then ISO-8601, then `text2rrule`.
 
 ## Iterative Task Flow
 
@@ -106,7 +106,7 @@ The successor's `due`, `scheduled`, `wait` and `until` dates are computed from t
 - fixed+ anchors off the anchor date but advancing to the next occurrence on or after now
 - chained anchors off the completion time.
 
-If the rule carries a `COUNT`, the successor's `iter_count` is one greater than the completed instance's, and the series ends once an instance's `iter_count` reaches the `COUNT`. The rule is copied unchanged.
+The successor's `iter_count` is one greater than the completed instance's. If the rule carries a `COUNT`, the series ends once an instance's `iter_count` reaches the `COUNT`. The rule is copied unchanged.
 
 Note: because completing a task makes its own status `Completed`, the handle used to complete it now refers to the completed occurrence.
 
@@ -123,7 +123,7 @@ There are two ways to end a series early:
 
 ### Interpreting Incomplete Iterative Tasks
 
-As with any task, an `iterative` task must be have a reasonable interpretation even when it does not fully meet the requirements for an iterative task, for example if `iter` is manually cleared without changing the status. A task with status `iterative` that is missing `iter`, `iter_type`, or all of `due`, `scheduled` and `wait`, or whose `iter` or `iter_type` cannot be parsed and is interpreted as a pending task that does not iterate. It stays in the working set and carries the `PENDING` synthetic tag like any other live iterative task.
+As with any task, an `iterative` task must be have a reasonable interpretation even when it does not fully meet the requirements for an iterative task, for example if `iter` is manually cleared without changing the status. A task with status `iterative` that is missing `iter`, `iter_type`, or all of `due`, `scheduled` and `wait`, or whose `iter` or `iter_type` cannot be parsed is interpreted as a pending task that does not iterate. It stays in the working set and carries the `PENDING` synthetic tag like any other live iterative task.
 
 Attempting to complete a broken iterative task returns an error describing what is missing and leaves the task unchanged, so the front end can prompt the user to repair it or deal with it some other way.
 
